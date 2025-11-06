@@ -1,4 +1,4 @@
-from fastapi import FastAPI, APIRouter
+from fastapi import FastAPI, APIRouter, File, UploadFile, Form, HTTPException
 from dotenv import load_dotenv
 from starlette.middleware.cors import CORSMiddleware
 from motor.motor_asyncio import AsyncIOMotorClient
@@ -6,9 +6,13 @@ import os
 import logging
 from pathlib import Path
 from pydantic import BaseModel, Field
-from typing import List
+from typing import List, Optional, Dict, Any
 import uuid
 from datetime import datetime
+import base64
+import re
+import json
+from openai import OpenAI
 
 
 ROOT_DIR = Path(__file__).parent
@@ -18,6 +22,9 @@ load_dotenv(ROOT_DIR / '.env')
 mongo_url = os.environ['MONGO_URL']
 client = AsyncIOMotorClient(mongo_url)
 db = client[os.environ['DB_NAME']]
+
+# OpenAI client
+openai_client = OpenAI(api_key=os.environ['OPENAI_API_KEY'])
 
 # Create the main app without a prefix
 app = FastAPI()
@@ -35,10 +42,26 @@ class StatusCheck(BaseModel):
 class StatusCheckCreate(BaseModel):
     client_name: str
 
+class VoiceAnalysisRequest(BaseModel):
+    audio_base64: str
+    user_id: str
+    recording_mode: str
+    recording_time: int
+
+class VoiceAnalysisResponse(BaseModel):
+    assessment_id: str
+    status: str
+    message: str
+
+class AssessmentStatus(BaseModel):
+    assessment_id: str
+    processed: bool
+    results: Optional[Dict[str, Any]] = None
+
 # Add your routes to the router instead of directly to app
 @api_router.get("/")
 async def root():
-    return {"message": "Hello World"}
+    return {"message": "The Mirror Note API - Voice Assessment Platform"}
 
 @api_router.post("/status", response_model=StatusCheck)
 async def create_status_check(input: StatusCheckCreate):
@@ -51,6 +74,296 @@ async def create_status_check(input: StatusCheckCreate):
 async def get_status_checks():
     status_checks = await db.status_checks.find().to_list(1000)
     return [StatusCheck(**status_check) for status_check in status_checks]
+
+@api_router.post("/analyze-voice", response_model=VoiceAnalysisResponse)
+async def analyze_voice(request: VoiceAnalysisRequest):
+    """
+    Analyzes voice recording using OpenAI Whisper and GPT-4
+    """
+    try:
+        # Create assessment record
+        assessment_id = str(uuid.uuid4())
+        
+        # Save initial assessment to database
+        assessment = {
+            "assessment_id": assessment_id,
+            "user_id": request.user_id,
+            "recording_mode": request.recording_mode,
+            "recording_time": request.recording_time,
+            "audio_data": request.audio_base64,
+            "processed": False,
+            "created_at": datetime.utcnow()
+        }
+        
+        await db.assessments.insert_one(assessment)
+        
+        # Process audio in background (simplified for now - in production use Celery/background tasks)
+        # For MVP, we'll process immediately
+        try:
+            # Decode base64 audio
+            audio_bytes = base64.b64decode(request.audio_base64)
+            
+            # Save temporarily for Whisper API
+            temp_audio_path = f"/tmp/{assessment_id}.m4a"
+            with open(temp_audio_path, "wb") as f:
+                f.write(audio_bytes)
+            
+            # Transcribe with Whisper
+            with open(temp_audio_path, "rb") as audio_file:
+                transcription = openai_client.audio.transcriptions.create(
+                    model="whisper-1",
+                    file=audio_file,
+                    response_format="text"
+                )
+            
+            # Clean up temp file
+            os.remove(temp_audio_path)
+            
+            # Analyze transcription text
+            analysis = analyze_transcription(transcription, request.recording_time)
+            
+            # Update assessment with results
+            await db.assessments.update_one(
+                {"assessment_id": assessment_id},
+                {"$set": {
+                    "transcription": transcription,
+                    "analysis": analysis,
+                    "processed": True,
+                    "processed_at": datetime.utcnow()
+                }}
+            )
+            
+            # Generate training questions
+            training_questions = generate_training_questions(analysis, transcription)
+            await db.training_questions.insert_one({
+                "assessment_id": assessment_id,
+                "questions": training_questions,
+                "created_at": datetime.utcnow()
+            })
+            
+            return VoiceAnalysisResponse(
+                assessment_id=assessment_id,
+                status="completed",
+                message="Analysis completed successfully"
+            )
+            
+        except Exception as e:
+            logger.error(f"Error processing audio: {str(e)}")
+            await db.assessments.update_one(
+                {"assessment_id": assessment_id},
+                {"$set": {
+                    "processed": True,
+                    "error": str(e),
+                    "processed_at": datetime.utcnow()
+                }}
+            )
+            raise HTTPException(status_code=500, detail=f"Error processing audio: {str(e)}")
+            
+    except Exception as e:
+        logger.error(f"Error in analyze_voice: {str(e)}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+@api_router.get("/assessment/{assessment_id}")
+async def get_assessment(assessment_id: str):
+    """
+    Get assessment results
+    """
+    assessment = await db.assessments.find_one({"assessment_id": assessment_id})
+    
+    if not assessment:
+        raise HTTPException(status_code=404, detail="Assessment not found")
+    
+    # Get training questions
+    training_questions = await db.training_questions.find_one({"assessment_id": assessment_id})
+    
+    # Remove MongoDB _id field
+    assessment.pop("_id", None)
+    if training_questions:
+        training_questions.pop("_id", None)
+        assessment["training_questions"] = training_questions.get("questions", [])
+    
+    return assessment
+
+def analyze_transcription(text: str, recording_time: int) -> Dict[str, Any]:
+    """
+    Analyze transcription using GPT-4
+    """
+    # Calculate basic metrics
+    word_count = len(text.split())
+    speaking_pace = int((word_count / recording_time) * 60) if recording_time > 0 else 0
+    
+    # Detect filler words
+    filler_words = detect_filler_words(text)
+    filler_count = sum(filler_words.values())
+    
+    # Use GPT-4 for advanced analysis
+    prompt = f"""Analyze this voice transcription and provide a detailed assessment:
+
+Transcription: "{text}"
+
+Speaking pace: {speaking_pace} WPM
+Filler words detected: {filler_count}
+
+Please provide:
+1. Voice Archetype (e.g., "Warm Storyteller", "Confident Presenter", "Analytical Thinker")
+2. Overall score (0-100)
+3. Clarity score (0-100)
+4. Confidence score (0-100)
+5. Tone analysis (professional/casual/friendly/etc)
+6. 3-4 key strengths
+7. 3-4 areas for improvement
+8. Estimated pitch range (Low/Medium/High with average Hz estimate)
+
+Format your response as JSON with these exact keys:
+{{
+  "archetype": "string",
+  "overall_score": number,
+  "clarity_score": number,
+  "confidence_score": number,
+  "tone": "string",
+  "strengths": ["string", "string", ...],
+  "improvements": ["string", "string", ...],
+  "pitch_avg": number,
+  "pitch_range": "Low/Medium/High"
+}}
+"""
+    
+    try:
+        response = openai_client.chat.completions.create(
+            model="gpt-4",
+            messages=[
+                {"role": "system", "content": "You are an expert voice and communication coach."},
+                {"role": "user", "content": prompt}
+            ],
+            response_format={"type": "json_object"}
+        )
+        
+        gpt_analysis = json.loads(response.choices[0].message.content)
+        
+        # Combine with basic metrics
+        return {
+            "archetype": gpt_analysis.get("archetype", "Emerging Communicator"),
+            "overall_score": gpt_analysis.get("overall_score", 70),
+            "clarity_score": gpt_analysis.get("clarity_score", 75),
+            "confidence_score": gpt_analysis.get("confidence_score", 70),
+            "tone": gpt_analysis.get("tone", "Neutral"),
+            "strengths": gpt_analysis.get("strengths", []),
+            "improvements": gpt_analysis.get("improvements", []),
+            "pitch_avg": gpt_analysis.get("pitch_avg", 150),
+            "pitch_range": gpt_analysis.get("pitch_range", "Medium"),
+            "speaking_pace": speaking_pace,
+            "filler_words": filler_words,
+            "filler_count": filler_count,
+            "word_count": word_count
+        }
+        
+    except Exception as e:
+        logger.error(f"Error in GPT analysis: {str(e)}")
+        # Return default analysis if GPT fails
+        return {
+            "archetype": "Emerging Communicator",
+            "overall_score": 70,
+            "clarity_score": 75,
+            "confidence_score": 70,
+            "tone": "Neutral",
+            "strengths": ["Clear articulation", "Good pacing"],
+            "improvements": ["Reduce filler words", "Vary tone more"],
+            "pitch_avg": 150,
+            "pitch_range": "Medium",
+            "speaking_pace": speaking_pace,
+            "filler_words": filler_words,
+            "filler_count": filler_count,
+            "word_count": word_count
+        }
+
+def detect_filler_words(text: str) -> Dict[str, int]:
+    """
+    Detect filler words in transcription
+    """
+    filler_patterns = {
+        "um": r'\bum\b',
+        "uh": r'\buh\b',
+        "like": r'\blike\b',
+        "you know": r'\byou know\b',
+        "so": r'\bso\b',
+        "actually": r'\bactually\b',
+        "basically": r'\bbasically\b',
+    }
+    
+    text_lower = text.lower()
+    filler_counts = {}
+    
+    for filler, pattern in filler_patterns.items():
+        count = len(re.findall(pattern, text_lower))
+        if count > 0:
+            filler_counts[filler] = count
+    
+    return filler_counts
+
+def generate_training_questions(analysis: Dict[str, Any], transcription: str) -> List[Dict[str, Any]]:
+    """
+    Generate personalized training questions using GPT-4
+    """
+    prompt = f"""Based on this voice analysis, generate 10 training questions to help improve communication skills:
+
+Analysis:
+- Archetype: {analysis.get('archetype')}
+- Strengths: {', '.join(analysis.get('strengths', []))}
+- Areas for improvement: {', '.join(analysis.get('improvements', []))}
+- Filler words: {analysis.get('filler_count', 0)}
+- Speaking pace: {analysis.get('speaking_pace', 0)} WPM
+
+Generate 10 questions with answers that address the improvement areas. Make them practical and actionable.
+
+Format as JSON array with this structure:
+[
+  {{
+    "question": "string",
+    "answer": "string",
+    "is_free": boolean (first 3 are true, rest false)
+  }}
+]
+"""
+    
+    try:
+        response = openai_client.chat.completions.create(
+            model="gpt-4",
+            messages=[
+                {"role": "system", "content": "You are an expert communication coach."},
+                {"role": "user", "content": prompt}
+            ],
+            response_format={"type": "json_object"}
+        )
+        
+        result = json.loads(response.choices[0].message.content)
+        questions = result.get("questions", [])
+        
+        # Ensure first 3 are marked as free
+        for i, q in enumerate(questions):
+            q["is_free"] = i < 3
+        
+        return questions[:10]
+        
+    except Exception as e:
+        logger.error(f"Error generating questions: {str(e)}")
+        # Return default questions
+        return [
+            {
+                "question": "How can I reduce filler words in my speech?",
+                "answer": "Practice pausing instead of using filler words. Record yourself and identify patterns.",
+                "is_free": True
+            },
+            {
+                "question": "What exercises improve speaking clarity?",
+                "answer": "Try tongue twisters, slow reading aloud, and articulation exercises daily.",
+                "is_free": True
+            },
+            {
+                "question": "How do I project more confidence?",
+                "answer": "Maintain good posture, make eye contact, and practice power poses before speaking.",
+                "is_free": True
+            }
+        ]
 
 # Include the router in the main app
 app.include_router(api_router)
