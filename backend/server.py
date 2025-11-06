@@ -23,8 +23,11 @@ mongo_url = os.environ['MONGO_URL']
 client = AsyncIOMotorClient(mongo_url)
 db = client[os.environ['DB_NAME']]
 
-# OpenAI client
-openai_client = OpenAI(api_key=os.environ['OPENAI_API_KEY'])
+# OpenAI client - configured for Emergent LLM
+openai_client = OpenAI(
+    api_key=os.environ['OPENAI_API_KEY'],
+    base_url="https://integrations.emergentagent.com/v1"
+)
 
 # Create the main app without a prefix
 app = FastAPI()
