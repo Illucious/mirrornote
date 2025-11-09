@@ -102,9 +102,33 @@
 # Testing Data - Main Agent and testing sub agent both should log testing data below this section
 #====================================================================================================
 
-user_problem_statement: "Build The Mirror Note - AI Voice Assessment Platform in Expo/React Native with FastAPI backend, MongoDB, OpenAI integration (Whisper + GPT-4), and mocked Razorpay payments"
+user_problem_statement: "Build The Mirror Note - AI Voice Assessment Platform in Expo/React Native with FastAPI backend, MongoDB, OpenAI integration (Whisper + GPT-4), Google Auth, and Razorpay payments. Plans: Free (5 total assessments), Standard (₹499/month - 30 assessments per month)"
 
 backend:
+  - task: "Google Authentication Backend"
+    implemented: true
+    working: "NA"
+    file: "/app/backend/auth.py"
+    stuck_count: 0
+    priority: "high"
+    needs_retesting: true
+    status_history:
+      - working: "NA"
+        agent: "main"
+        comment: "Pulled Google Auth integration from GitHub. Backend handles session token exchange with Emergent Auth API, creates user records, manages sessions with MongoDB."
+
+  - task: "Usage Tracking & Limits"
+    implemented: true
+    working: "NA"
+    file: "/app/backend/usage.py"
+    stuck_count: 0
+    priority: "high"
+    needs_retesting: true
+    status_history:
+      - working: "NA"
+        agent: "main"
+        comment: "Created UsageService to enforce plan limits: Free (5 total assessments), Standard (30/month). Endpoint /api/usage to get current usage. Integrated into /api/analyze-voice to block over-limit requests."
+
   - task: "Backend API - Voice Analysis Endpoint"
     implemented: true
     working: "NA"
@@ -115,7 +139,7 @@ backend:
     status_history:
       - working: "NA"
         agent: "main"
-        comment: "Created /api/analyze-voice endpoint that accepts base64 audio, transcribes with Whisper, analyzes with GPT-4, calculates metrics (WPM, filler words, pitch), generates training questions. Uses Emergent LLM key for OpenAI."
+        comment: "Updated /api/analyze-voice endpoint: removed MOCK_MODE, now uses real OpenAI Whisper + GPT-4 via Emergent LLM key. Added usage limit checks before processing. Requires authentication."
         
   - task: "Backend API - Get Assessment Results"
     implemented: true
