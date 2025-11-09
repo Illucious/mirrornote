@@ -16,6 +16,7 @@ import json
 from openai import OpenAI
 from auth import AuthService
 from payment import PaymentService
+from usage import UsageService
 
 
 ROOT_DIR = Path(__file__).parent
