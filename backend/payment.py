@@ -89,12 +89,9 @@ class PaymentService:
                 }}
             )
             
-            # Calculate subscription dates
+            # Calculate subscription dates (Standard plan is monthly)
             starts_at = datetime.now(timezone.utc)
-            if order["plan_type"] == "monthly":
-                ends_at = starts_at + timedelta(days=30)
-            else:  # yearly
-                ends_at = starts_at + timedelta(days=365)
+            ends_at = starts_at + timedelta(days=30)  # Monthly subscription
             
             # Create/update subscription
             await self.db.subscriptions.update_one(
