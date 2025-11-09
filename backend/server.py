@@ -27,12 +27,10 @@ client = AsyncIOMotorClient(mongo_url)
 db = client[os.environ['DB_NAME']]
 
 # OpenAI client - configured for Emergent LLM
-# Note: Using mock mode for testing due to API key configuration issues
-MOCK_MODE = True
-if not MOCK_MODE:
-    openai_client = OpenAI(api_key=os.environ['OPENAI_API_KEY'])
-else:
-    openai_client = None  # Will use mock responses
+openai_client = OpenAI(
+    api_key=os.environ['OPENAI_API_KEY'],
+    base_url="https://llm.kindo.ai/v1"
+)
 
 # Initialize services
 auth_service = AuthService(db)
