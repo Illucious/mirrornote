@@ -216,7 +216,7 @@ async def analyze_voice(request_data: VoiceAnalysisRequest, request: Request):
                 pass
             
             # Analyze transcription text
-            analysis = analyze_transcription(transcription, request.recording_time)
+            analysis = analyze_transcription(transcription, request_data.recording_time)
             
             # Update assessment with results
             await db.assessments.update_one(
