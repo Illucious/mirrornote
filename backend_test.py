@@ -9,11 +9,15 @@ import json
 import base64
 import time
 import os
-from datetime import datetime
+import uuid
+from datetime import datetime, timezone, timedelta
+from pymongo import MongoClient
 
 # Configuration
 BACKEND_URL = "https://speak-assess-2.preview.emergentagent.com/api"
-TEST_USER_ID = "test_user_voice_assessment_2024"
+TEST_USER_ID = str(uuid.uuid4())
+MONGO_URL = "mongodb://localhost:27017"
+DB_NAME = "test_database"
 
 def create_mock_audio_base64():
     """Create a small mock audio file in base64 format for testing"""
