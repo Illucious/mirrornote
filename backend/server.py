@@ -254,11 +254,17 @@ async def analyze_voice(request_data: VoiceAnalysisRequest, request: Request):
         raise HTTPException(status_code=500, detail=str(e))
 
 @api_router.get("/assessment/{assessment_id}")
-async def get_assessment(assessment_id: str):
+async def get_assessment(assessment_id: str, request: Request):
     """
     Get assessment results
     """
-    assessment = await db.assessments.find_one({"assessment_id": assessment_id})
+    # Verify user owns this assessment
+    user = await auth_service.get_current_user(request)
+    
+    assessment = await db.assessments.find_one({
+        "assessment_id": assessment_id,
+        "user_id": user["id"]
+    })
     
     if not assessment:
         raise HTTPException(status_code=404, detail="Assessment not found")
@@ -273,6 +279,28 @@ async def get_assessment(assessment_id: str):
         assessment["training_questions"] = training_questions.get("questions", [])
     
     return assessment
+
+@api_router.get("/assessments")
+async def get_assessments(request: Request, limit: int = 10, skip: int = 0):
+    """
+    Get user's assessment history
+    """
+    user = await auth_service.get_current_user(request)
+    
+    # Get assessments with pagination
+    assessments = await db.assessments.find(
+        {"user_id": user["id"]},
+        {"audio_data": 0}  # Exclude large audio data
+    ).sort("created_at", -1).skip(skip).limit(limit).to_list(limit)
+    
+    # Remove MongoDB _id field
+    for assessment in assessments:
+        assessment.pop("_id", None)
+    
+    return {
+        "assessments": assessments,
+        "total": await db.assessments.count_documents({"user_id": user["id"]})
+    }
 
 def analyze_transcription(text: str, recording_time: int) -> Dict[str, Any]:
     """
