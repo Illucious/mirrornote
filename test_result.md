@@ -281,3 +281,5 @@ test_plan:
 agent_communication:
   - agent: "main"
     message: "UPDATE: Pulled Google Auth integration from GitHub. Removed MOCK_MODE from voice analysis - now uses real OpenAI Whisper/GPT-4 with Emergent LLM key. Added usage tracking service: Free plan (5 total assessments), Standard plan (₹499/month - 30 assessments). Updated payment backend for new pricing. Need to test: Auth flow, usage limits enforcement, voice analysis with real audio, payment flow."
+  - agent: "testing"
+    message: "BACKEND TESTING COMPLETED: Comprehensive testing performed on all backend APIs. CRITICAL ISSUES FOUND: 1) OpenAI Whisper integration failing - Emergent LLM API endpoint https://llm.kindo.ai/v1/audio/transcriptions returns 404 Not Found. 2) Razorpay payment integration failing due to authentication (expected with dummy credentials). All other systems working: Auth flow, MongoDB, usage tracking, assessment endpoints. Need main agent to investigate OpenAI integration issue."
