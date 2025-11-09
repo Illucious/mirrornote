@@ -1,8 +1,10 @@
 from fastapi import FastAPI, APIRouter, File, UploadFile, Form, HTTPException, Request, Response
+from fastapi import FastAPI, APIRouter, File, UploadFile, Form, HTTPException, Request, Response
 from dotenv import load_dotenv
 from starlette.middleware.cors import CORSMiddleware
 from motor.motor_asyncio import AsyncIOMotorClient
 import os
+import tempfile
 import tempfile
 import logging
 from pathlib import Path
@@ -151,6 +153,7 @@ async def get_usage(request: Request):
 
 # ============ VOICE ANALYSIS ENDPOINTS ============
 @api_router.post("/analyze-voice", response_model=VoiceAnalysisResponse)
+async def analyze_voice(request_data: VoiceAnalysisRequest, request: Request):
 async def analyze_voice(request_data: VoiceAnalysisRequest, request: Request):
     """
     Analyzes voice recording using OpenAI Whisper and GPT-4
