@@ -154,9 +154,9 @@ async def analyze_voice(request_data: VoiceAnalysisRequest, request: Request):
         assessment = {
             "assessment_id": assessment_id,
             "user_id": user_id,
-            "recording_mode": request.recording_mode,
-            "recording_time": request.recording_time,
-            "audio_data": request.audio_base64,
+            "recording_mode": request_data.recording_mode,
+            "recording_time": request_data.recording_time,
+            "audio_data": request_data.audio_base64,
             "processed": False,
             "created_at": datetime.utcnow()
         }
