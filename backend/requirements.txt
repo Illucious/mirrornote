@@ -30,7 +30,7 @@ mdurl==0.1.2
 motor==3.3.1
 mypy==1.18.2
 mypy_extensions==1.1.0
-numpy==2.3.4
+numpy==1.26.4
 oauthlib==3.3.1
 openai==2.7.1
 packaging==25.0
@@ -74,3 +74,8 @@ tzdata==2025.2
 urllib3==2.5.0
 uvicorn==0.25.0
 watchfiles==1.1.1
+librosa==0.10.1
+soundfile==0.12.1
+webrtcvad==2.0.10
+scipy==1.11.4
+resampy==0.4.2

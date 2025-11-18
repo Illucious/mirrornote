@@ -55,7 +55,7 @@ export default function ProcessingScreen() {
       setStage('transcribing');
       setProgress(50);
 
-      // Send to backend
+      // Send to backend (token is automatically added by axios interceptor)
       const response = await axios.post(`${BACKEND_URL}/api/analyze-voice`, {
         audio_base64: audioBase64,
         user_id: user?.id || 'demo_user',
@@ -85,7 +85,23 @@ export default function ProcessingScreen() {
       });
     } catch (err: any) {
       console.error('Processing error:', err);
-      setError(err.response?.data?.detail || err.message || 'Failed to process audio');
+      
+      // Handle authentication errors specifically
+      if (err.response?.status === 401) {
+        setError('You are not authenticated. Please log in and try again.');
+      } else if (err.response?.status === 403) {
+        setError(err.response?.data?.detail?.message || 'You have reached your usage limit. Please upgrade to premium.');
+      } else {
+        // Show detailed error message from backend
+        const errorDetail = err.response?.data?.detail;
+        if (typeof errorDetail === 'string') {
+          setError(errorDetail);
+        } else if (errorDetail?.message) {
+          setError(errorDetail.message);
+        } else {
+          setError(err.message || 'Failed to process audio. Please try again.');
+        }
+      }
     }
   };
 

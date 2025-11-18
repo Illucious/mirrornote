@@ -41,3 +41,8 @@ export const BORDER_RADIUS = {
   xl: 24,
   round: 999,
 };
+
+// Default export to prevent Expo Router from treating this as a route
+export default function ThemeModuleRoute() {
+  return null;
+}

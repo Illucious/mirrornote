@@ -1,10 +1,8 @@
 from fastapi import FastAPI, APIRouter, File, UploadFile, Form, HTTPException, Request, Response
-from fastapi import FastAPI, APIRouter, File, UploadFile, Form, HTTPException, Request, Response
 from dotenv import load_dotenv
 from starlette.middleware.cors import CORSMiddleware
 from motor.motor_asyncio import AsyncIOMotorClient
 import os
-import tempfile
 import tempfile
 import logging
 from pathlib import Path
@@ -19,6 +17,11 @@ from openai import OpenAI
 from auth import AuthService
 from payment import PaymentService
 from usage import UsageService
+import audio_utils
+import vad
+import feature_extractor
+import insights_generator
+import prompt_builder
 
 
 ROOT_DIR = Path(__file__).parent
@@ -78,6 +81,9 @@ class AssessmentStatus(BaseModel):
     processed: bool
     results: Optional[Dict[str, Any]] = None
 
+class SessionRequest(BaseModel):
+    session_id: str
+
 # Add your routes to the router instead of directly to app
 @api_router.get("/")
 async def root():
@@ -97,11 +103,11 @@ async def get_status_checks():
 
 # ============ AUTH ENDPOINTS ============
 @api_router.post("/auth/session")
-async def create_session(session_id: str, response: Response):
+async def create_session(request_data: SessionRequest, response: Response):
     """
     Exchange session_id from URL for session_token
     """
-    return await auth_service.process_session_id(session_id, response)
+    return await auth_service.process_session_id(request_data.session_id, response)
 
 @api_router.get("/auth/me")
 async def get_me(request: Request):
@@ -154,7 +160,6 @@ async def get_usage(request: Request):
 # ============ VOICE ANALYSIS ENDPOINTS ============
 @api_router.post("/analyze-voice", response_model=VoiceAnalysisResponse)
 async def analyze_voice(request_data: VoiceAnalysisRequest, request: Request):
-async def analyze_voice(request_data: VoiceAnalysisRequest, request: Request):
     """
     Analyzes voice recording using OpenAI Whisper and GPT-4
     """
@@ -193,33 +198,134 @@ async def analyze_voice(request_data: VoiceAnalysisRequest, request: Request):
         # Process audio in background (simplified for now - in production use Celery/background tasks)
         # For MVP, we'll process immediately
         try:
-            # Decode base64 audio
-            audio_bytes = base64.b64decode(request_data.audio_base64)
-
-            # Save temporarily to a cross-platform temp directory
-            temp_dir = tempfile.gettempdir()
-            temp_audio_path = os.path.join(temp_dir, f"{assessment_id}.m4a")
-            with open(temp_audio_path, "wb") as f:
-                f.write(audio_bytes)
-
-            # Transcribe with Whisper (using direct OpenAI API)
-            with open(temp_audio_path, "rb") as audio_file:
-                transcription_response = openai_audio_client.audio.transcriptions.create(
-                    model="whisper-1",
-                    file=audio_file,
-                    response_format="text"
-                )
-                transcription = transcription_response if isinstance(transcription_response, str) else transcription_response.text
-
-            # Clean up temp file (best-effort)
-            try:
-                if os.path.exists(temp_audio_path):
-                    os.remove(temp_audio_path)
-            except Exception:
-                pass
+            # ===== NEW ACOUSTIC ANALYSIS PIPELINE =====
             
-            # Analyze transcription text
-            analysis = analyze_transcription(transcription, request_data.recording_time)
+            # 1. Load audio from base64
+            audio, sr = audio_utils.load_audio_from_base64(request_data.audio_base64, target_sr=16000)
+            duration = audio_utils.get_audio_duration(audio, sr)
+            
+            # 2. Voice Activity Detection and timing analysis
+            segments = vad.segment_speech(audio, sr)
+            timing_metrics = vad.compute_timing_metrics(segments, duration)
+            
+            # 3. Extract all acoustic features
+            acoustic_features = feature_extractor.extract_all_features(audio, sr, segments)
+            
+            # 4. Transcription with Whisper
+            temp_wav_path = audio_utils.save_temp_wav(audio, sr)
+            try:
+                with open(temp_wav_path, "rb") as audio_file:
+                    transcription_response = openai_audio_client.audio.transcriptions.create(
+                        model="whisper-1",
+                        file=audio_file,
+                        response_format="text"
+                    )
+                    transcription = transcription_response if isinstance(transcription_response, str) else transcription_response.text
+            finally:
+                # Clean up temp file
+                if os.path.exists(temp_wav_path):
+                    os.remove(temp_wav_path)
+            
+            # 5. Detect filler words
+            filler_words = detect_filler_words(transcription)
+            word_count = len(transcription.split())
+            speaking_pace = int((word_count / duration) * 60) if duration > 0 else 0
+            
+            # 6. Build comprehensive metrics
+            all_metrics = {
+                "transcription": transcription,
+                "duration": duration,
+                "word_count": word_count,
+                "speaking_pace": speaking_pace,
+                "filler_words": filler_words,
+                "timing": timing_metrics,
+                "prosody": acoustic_features["prosody"],
+                "loudness": acoustic_features["loudness"],
+                "quality": acoustic_features["quality"],
+                "spectral": acoustic_features["spectral"]
+            }
+            
+            # 7. Generate rule-based personalized insights
+            rule_based_insights = insights_generator.generate_personalized_summary(all_metrics)
+            
+            # 8. Enhanced GPT analysis with acoustic context
+            gpt_prompt = prompt_builder.build_gpt_analysis_prompt(
+                transcription=transcription,
+                acoustic_metrics=all_metrics,
+                duration=duration
+            )
+            
+            try:
+                gpt_response = openai_text_client.chat.completions.create(
+                    model="gpt-4",
+                    messages=[
+                        {"role": "system", "content": prompt_builder.SYSTEM_PROMPT},
+                        {"role": "user", "content": gpt_prompt}
+                    ],
+                    response_format={"type": "json_object"}
+                )
+                gpt_insights = json.loads(gpt_response.choices[0].message.content)
+            except Exception as e:
+                logger.error(f"GPT analysis failed: {e}. Using rule-based insights.")
+                gpt_insights = {}
+            
+            # 9. Merge insights: GPT + rule-based fallbacks
+            analysis = {
+                # User-facing insights (personalized narrative)
+                "insights": {
+                    "voice_personality": gpt_insights.get("voice_personality", rule_based_insights["voice_personality"]),
+                    "headline": gpt_insights.get("headline", rule_based_insights["headline"]),
+                    "key_insights": gpt_insights.get("key_insights", rule_based_insights["key_insights"]),
+                    "what_went_well": gpt_insights.get("strengths", rule_based_insights["what_went_well"]),
+                    "growth_opportunities": gpt_insights.get("improvements", rule_based_insights["growth_opportunities"]),
+                    "tone_description": gpt_insights.get("tone_description", rule_based_insights["tone_description"]),
+                    "voice_archetype": gpt_insights.get("archetype", rule_based_insights["voice_personality"]),
+                    "overall_score": gpt_insights.get("overall_score", 75),
+                    "clarity_score": gpt_insights.get("clarity_score", 75),
+                    "confidence_score": gpt_insights.get("confidence_score", 70),
+                    "personalized_tips": gpt_insights.get("actionable_tips", [])
+                },
+                
+                # Simplified metrics for UI display
+                "metrics": {
+                    "speaking_pace": speaking_pace,
+                    "word_count": word_count,
+                    "pause_effectiveness": timing_metrics["pause_count"],
+                    "vocal_variety": "High" if acoustic_features["prosody"]["pitch_std"] > 40 else "Moderate",
+                    "energy_level": "Dynamic" if acoustic_features["loudness"]["dynamic_range_db"] > 10 else "Consistent",
+                    "clarity_rating": "Excellent" if acoustic_features["quality"]["hnr_mean"] > 15 else "Good"
+                },
+                
+                # Raw technical data (for debugging/advanced view)
+                "technical": {
+                    "prosody": acoustic_features["prosody"],
+                    "loudness": acoustic_features["loudness"],
+                    "quality": acoustic_features["quality"],
+                    "spectral": acoustic_features["spectral"],
+                    "timing": timing_metrics,
+                    "filler_words": filler_words
+                },
+                
+                # Timelines for visualization
+                "timelines": {
+                    "pitch": acoustic_features["prosody"].get("pitch_series", []),
+                    "loudness": acoustic_features["loudness"].get("rms_series", []),
+                    "pauses": timing_metrics.get("pause_events", [])
+                },
+                
+                # Legacy fields for backward compatibility
+                "archetype": gpt_insights.get("archetype", rule_based_insights["voice_personality"]),
+                "overall_score": gpt_insights.get("overall_score", 75),
+                "clarity_score": gpt_insights.get("clarity_score", 75),
+                "confidence_score": gpt_insights.get("confidence_score", 70),
+                "tone": gpt_insights.get("tone_description", rule_based_insights["tone_description"]),
+                "strengths": gpt_insights.get("strengths", rule_based_insights["what_went_well"]),
+                "improvements": gpt_insights.get("improvements", rule_based_insights["growth_opportunities"]),
+                "speaking_pace": speaking_pace,
+                "filler_words": filler_words,
+                "filler_count": sum(filler_words.values()),
+                "word_count": word_count
+            }
             
             # Update assessment with results
             await db.assessments.update_one(
@@ -247,7 +353,8 @@ async def analyze_voice(request_data: VoiceAnalysisRequest, request: Request):
             )
             
         except Exception as e:
-            logger.error(f"Error processing audio: {str(e)}")
+            import traceback
+            logger.error(f"Error processing audio: {str(e)}\n{traceback.format_exc()}")
             await db.assessments.update_one(
                 {"assessment_id": assessment_id},
                 {"$set": {
@@ -258,9 +365,14 @@ async def analyze_voice(request_data: VoiceAnalysisRequest, request: Request):
             )
             raise HTTPException(status_code=500, detail=f"Error processing audio: {str(e)}")
             
+    except HTTPException:
+        # Re-raise HTTPExceptions (like 401, 403) as-is - don't convert to 500
+        raise
     except Exception as e:
-        logger.error(f"Error in analyze_voice: {str(e)}")
-        raise HTTPException(status_code=500, detail=str(e))
+        # Log unexpected errors with full traceback
+        import traceback
+        logger.error(f"Unexpected error in analyze_voice: {str(e)}\n{traceback.format_exc()}")
+        raise HTTPException(status_code=500, detail=f"Internal server error: {str(e)}")
 
 @api_router.get("/assessment/{assessment_id}")
 async def get_assessment(assessment_id: str, request: Request):
@@ -509,6 +621,33 @@ logging.basicConfig(
     format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
 )
 logger = logging.getLogger(__name__)
+
+# Add global exception handler to log all exceptions
+@app.exception_handler(HTTPException)
+async def http_exception_handler(request: Request, exc: HTTPException):
+    """
+    Log HTTPExceptions (401, 403, 404, etc.) with their status codes
+    """
+    logger.warning(f"HTTPException {exc.status_code} on {request.method} {request.url.path}: {exc.detail}")
+    # Let FastAPI handle the response normally
+    from fastapi.responses import JSONResponse
+    return JSONResponse(
+        status_code=exc.status_code,
+        content={"detail": exc.detail} if isinstance(exc.detail, str) else exc.detail
+    )
+
+@app.exception_handler(Exception)
+async def global_exception_handler(request: Request, exc: Exception):
+    """
+    Global exception handler to log all unhandled exceptions
+    """
+    import traceback
+    logger.error(f"Unhandled exception on {request.method} {request.url.path}: {str(exc)}\n{traceback.format_exc()}")
+    from fastapi.responses import JSONResponse
+    return JSONResponse(
+        status_code=500,
+        content={"detail": f"Internal server error: {str(exc)}"}
+    )
 
 @app.on_event("shutdown")
 async def shutdown_db_client():

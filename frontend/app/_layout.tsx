@@ -16,6 +16,7 @@ export default function RootLayout() {
           <Stack.Screen name="processing" />
           <Stack.Screen name="results" />
           <Stack.Screen name="payment" />
+          <Stack.Screen name="debug-auth" />
         </Stack>
       </AuthProvider>
     </GestureHandlerRootView>

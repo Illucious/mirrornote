@@ -111,14 +111,22 @@ class AuthService:
             "email": user_data["email"],
             "name": user_data["name"],
             "picture": user_data.get("picture"),
-            "isPremium": existing_user.get("isPremium", False) if existing_user else False
+            "isPremium": existing_user.get("isPremium", False) if existing_user else False,
+            "session_token": session_token  # Include token in response for React Native
         }
     
     async def logout(self, request: Request, response: Response):
         """
         Logout user and clear session
         """
+        # Try cookie first
         session_token = request.cookies.get("session_token")
+        
+        # Fallback to Authorization header
+        if not session_token:
+            auth_header = request.headers.get("Authorization", "")
+            if auth_header.startswith("Bearer "):
+                session_token = auth_header.replace("Bearer ", "")
         
         if session_token:
             # Delete session from database

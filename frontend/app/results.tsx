@@ -22,21 +22,43 @@ interface Assessment {
   assessment_id: string;
   transcription: string;
   analysis: {
-    archetype: string;
-    overall_score: number;
-    clarity_score: number;
-    confidence_score: number;
-    tone: string;
-    strengths: string[];
-    improvements: string[];
-    pitch_avg: number;
-    pitch_range: string;
-    speaking_pace: number;
-    filler_words: { [key: string]: number };
-    filler_count: number;
-    word_count: number;
+    // New personalized insights structure
+    insights?: {
+      voice_personality: string;
+      headline: string;
+      key_insights: string[];
+      what_went_well: string[];
+      growth_opportunities: string[];
+      tone_description: string;
+      overall_score: number;
+      clarity_score: number;
+      confidence_score: number;
+      personalized_tips?: string[];
+    };
+    metrics?: {
+      speaking_pace: number;
+      word_count: number;
+      pause_effectiveness: number;
+      vocal_variety: string;
+      energy_level: string;
+      clarity_rating: string;
+    };
+    // Legacy fields for backward compatibility
+    archetype?: string;
+    overall_score?: number;
+    clarity_score?: number;
+    confidence_score?: number;
+    tone?: string;
+    strengths?: string[];
+    improvements?: string[];
+    pitch_avg?: number;
+    pitch_range?: string;
+    speaking_pace?: number;
+    filler_words?: { [key: string]: number };
+    filler_count?: number;
+    word_count?: number;
   };
-  training_questions: Array<{
+  training_questions?: Array<{
     question: string;
     answer: string;
     is_free: boolean;
@@ -106,6 +128,20 @@ export default function ResultsScreen() {
   const { analysis, training_questions } = assessment;
   const freeQuestions = training_questions?.filter(q => q.is_free) || [];
   const lockedQuestions = training_questions?.filter(q => !q.is_free) || [];
+  
+  // Extract values with fallbacks for backward compatibility
+  const overallScore = analysis.insights?.overall_score || analysis.overall_score || 75;
+  const archetype = analysis.insights?.voice_personality || analysis.archetype || 'Emerging Communicator';
+  const tone = analysis.insights?.tone_description || analysis.tone || 'Balanced';
+  const clarityScore = analysis.insights?.clarity_score || analysis.clarity_score || 75;
+  const confidenceScore = analysis.insights?.confidence_score || analysis.confidence_score || 70;
+  const speakingPace = analysis.metrics?.speaking_pace || analysis.speaking_pace || 0;
+  const pitchAvg = analysis.pitch_avg || 0;
+  const pitchRange = analysis.pitch_range || 'Medium';
+  const fillerWords = analysis.filler_words || {};
+  const fillerCount = analysis.filler_count || 0;
+  const strengths = analysis.insights?.what_went_well || analysis.strengths || [];
+  const improvements = analysis.insights?.growth_opportunities || analysis.improvements || [];
 
   return (
     <SafeAreaView style={styles.container}>
@@ -121,13 +157,13 @@ export default function ResultsScreen() {
         {/* Overall Score */}
         <View style={styles.scoreCard}>
           <View style={styles.scoreCircle}>
-            <Text style={styles.scoreValue}>{analysis.overall_score}</Text>
+            <Text style={styles.scoreValue}>{overallScore}</Text>
             <Text style={styles.scoreLabel}>Overall Score</Text>
           </View>
           <View style={styles.archetypeContainer}>
             <Text style={styles.archetypeLabel}>Your Voice Archetype</Text>
-            <Text style={styles.archetypeValue}>{analysis.archetype}</Text>
-            <Text style={styles.toneText}>Tone: {analysis.tone}</Text>
+            <Text style={styles.archetypeValue}>{archetype}</Text>
+            <Text style={styles.toneText}>Tone: {tone}</Text>
           </View>
         </View>
 
@@ -137,17 +173,17 @@ export default function ResultsScreen() {
           <View style={styles.metricsGrid}>
             <View style={styles.metricCard}>
               <Ionicons name="volume-high" size={24} color={COLORS.primary} />
-              <Text style={styles.metricValue}>{analysis.clarity_score}</Text>
+              <Text style={styles.metricValue}>{clarityScore}</Text>
               <Text style={styles.metricLabel}>Clarity</Text>
             </View>
             <View style={styles.metricCard}>
               <Ionicons name="trophy" size={24} color={COLORS.primary} />
-              <Text style={styles.metricValue}>{analysis.confidence_score}</Text>
+              <Text style={styles.metricValue}>{confidenceScore}</Text>
               <Text style={styles.metricLabel}>Confidence</Text>
             </View>
             <View style={styles.metricCard}>
               <Ionicons name="speedometer" size={24} color={COLORS.primary} />
-              <Text style={styles.metricValue}>{analysis.speaking_pace}</Text>
+              <Text style={styles.metricValue}>{speakingPace}</Text>
               <Text style={styles.metricLabel}>WPM</Text>
             </View>
           </View>
@@ -160,24 +196,24 @@ export default function ResultsScreen() {
             <View style={styles.pitchInfo}>
               <View style={styles.pitchItem}>
                 <Text style={styles.pitchLabel}>Average</Text>
-                <Text style={styles.pitchValue}>{analysis.pitch_avg} Hz</Text>
+                <Text style={styles.pitchValue}>{pitchAvg} Hz</Text>
               </View>
               <View style={styles.pitchItem}>
                 <Text style={styles.pitchLabel}>Range</Text>
-                <Text style={styles.pitchValue}>{analysis.pitch_range}</Text>
+                <Text style={styles.pitchValue}>{pitchRange}</Text>
               </View>
             </View>
           </View>
         </View>
 
         {/* Filler Words */}
-        {analysis.filler_count > 0 && (
+        {fillerCount > 0 && (
           <View style={styles.section}>
             <Text style={styles.sectionTitle}>
-              Filler Words ({analysis.filler_count} detected)
+              Filler Words ({fillerCount} detected)
             </Text>
             <View style={styles.card}>
-              {Object.entries(analysis.filler_words).map(([word, count]) => (
+              {Object.entries(fillerWords).map(([word, count]) => (
                 <View key={word} style={styles.fillerItem}>
                   <Text style={styles.fillerWord}>{word}</Text>
                   <View style={styles.fillerBar}>
@@ -185,7 +221,7 @@ export default function ResultsScreen() {
                       style={[
                         styles.fillerBarFill,
                         {
-                          width: `${(count / analysis.filler_count) * 100}%`,
+                          width: `${(count / fillerCount) * 100}%`,
                         },
                       ]}
                     />
@@ -198,13 +234,13 @@ export default function ResultsScreen() {
         )}
 
         {/* Strengths */}
-        {analysis.strengths && analysis.strengths.length > 0 && (
+        {strengths && strengths.length > 0 && (
           <View style={styles.section}>
             <Text style={styles.sectionTitle}>
               <Ionicons name="star" size={20} color={COLORS.success} /> Strengths
             </Text>
             <View style={styles.card}>
-              {analysis.strengths.map((strength, index) => (
+              {strengths.map((strength, index) => (
                 <View key={index} style={styles.listItem}>
                   <Ionicons
                     name="checkmark-circle"
@@ -219,14 +255,14 @@ export default function ResultsScreen() {
         )}
 
         {/* Improvements */}
-        {analysis.improvements && analysis.improvements.length > 0 && (
+        {improvements && improvements.length > 0 && (
           <View style={styles.section}>
             <Text style={styles.sectionTitle}>
               <Ionicons name="bulb" size={20} color={COLORS.warning} /> Areas for
               Improvement
             </Text>
             <View style={styles.card}>
-              {analysis.improvements.map((improvement, index) => (
+              {improvements.map((improvement, index) => (
                 <View key={index} style={styles.listItem}>
                   <Ionicons
                     name="arrow-up-circle"
