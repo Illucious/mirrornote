@@ -1,4 +1,4 @@
-import React, { createContext, useState, useContext, useEffect } from 'react';
+import React, { createContext, useState, useContext, useEffect, useRef } from 'react';
 import axios from 'axios';
 import * as Linking from 'expo-linking';
 import AsyncStorage from '@react-native-async-storage/async-storage';
@@ -51,6 +51,8 @@ axios.interceptors.request.use(
 export function AuthProvider({ children }: { children: React.ReactNode }) {
   const [user, setUser] = useState<User | null>(null);
   const [loading, setLoading] = useState(true);
+  const processingRef = useRef<string | null>(null); // Track which session_id is being processed
+  const processingLockRef = useRef(false); // Lock to prevent concurrent processing
 
   useEffect(() => {
     initializeAuth();
@@ -93,6 +95,12 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     const sessionId = extractSessionId(url);
     
     if (sessionId) {
+      // Prevent duplicate processing - check if already processing this session_id
+      if (processingRef.current === sessionId || processingLockRef.current) {
+        console.log('[AuthContext] Already processing this session_id, skipping duplicate call');
+        return;
+      }
+      
       console.log('[AuthContext] Found session_id in deep link, processing...');
       await processSessionId(sessionId);
     } else {
@@ -121,6 +129,21 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   };
 
   const processSessionId = async (sessionId: string) => {
+    // Prevent concurrent processing of the same session_id
+    if (processingLockRef.current) {
+      console.log('[AuthContext] Already processing a session, skipping duplicate call');
+      return;
+    }
+    
+    if (processingRef.current === sessionId) {
+      console.log('[AuthContext] Already processing this exact session_id, skipping');
+      return;
+    }
+    
+    // Set lock and track session_id
+    processingLockRef.current = true;
+    processingRef.current = sessionId;
+    
     try {
       console.log('[AuthContext] Processing session_id:', sessionId);
       const response = await axios.post(
@@ -151,6 +174,10 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       console.error('[AuthContext] Session processing error:', error);
       await AsyncStorage.removeItem(SESSION_TOKEN_KEY);
       setUser(null);
+    } finally {
+      // Release lock
+      processingLockRef.current = false;
+      processingRef.current = null;
     }
   };
 

@@ -51,6 +51,8 @@ class AuthService:
     async def process_session_id(self, session_id: str, response: Response):
         """
         Exchange session_id for user data and session_token
+        This function is idempotent - calling it multiple times with the same session_id
+        will only create one user and one session.
         """
         async with httpx.AsyncClient() as client:
             api_response = await client.get(
@@ -67,33 +69,81 @@ class AuthService:
             
             user_data = api_response.json()
         
-        # Check if user exists
+        session_token = user_data["session_token"]
+        
+        # IDEMPOTENCY CHECK: Check if session already exists
+        existing_session = await self.db.user_sessions.find_one({
+            "session_token": session_token
+        })
+        
+        if existing_session:
+            # Session already exists - return existing user data
+            existing_user = await self.db.users.find_one({"id": existing_session["user_id"]})
+            if existing_user:
+                existing_user.pop("_id", None)
+                return {
+                    "id": existing_user["id"],
+                    "email": existing_user["email"],
+                    "name": existing_user["name"],
+                    "picture": existing_user.get("picture"),
+                    "isPremium": existing_user.get("isPremium", False),
+                    "session_token": session_token
+                }
+        
+        # Check if user exists by email (idempotent check)
         existing_user = await self.db.users.find_one({"email": user_data["email"]})
         
         if not existing_user:
-            # Create new user
-            user_doc = {
-                "id": user_data["id"],
-                "email": user_data["email"],
-                "name": user_data["name"],
-                "picture": user_data.get("picture"),
-                "isPremium": False,
-                "created_at": datetime.now(timezone.utc)
-            }
-            await self.db.users.insert_one(user_doc)
+            # Use upsert to prevent duplicate user creation in race conditions
+            # Try to insert, but if duplicate key error, fetch existing
+            try:
+                user_doc = {
+                    "id": user_data["id"],
+                    "email": user_data["email"],
+                    "name": user_data["name"],
+                    "picture": user_data.get("picture"),
+                    "isPremium": False,
+                    "created_at": datetime.now(timezone.utc)
+                }
+                await self.db.users.insert_one(user_doc)
+            except Exception as e:
+                # If insert fails (e.g., duplicate key error), fetch existing user
+                # MongoDB duplicate key error code is 11000
+                error_str = str(e)
+                if "duplicate key" in error_str.lower() or "E11000" in error_str:
+                    existing_user = await self.db.users.find_one({"email": user_data["email"]})
+                    if existing_user:
+                        user_data["id"] = existing_user["id"]
+                    else:
+                        # Try by id as fallback
+                        existing_user = await self.db.users.find_one({"id": user_data["id"]})
+                        if existing_user:
+                            user_data["id"] = existing_user["id"]
+                        else:
+                            # Re-raise if we can't find the user
+                            raise
+                else:
+                    # Re-raise if it's not a duplicate error
+                    raise
         else:
             user_data["id"] = existing_user["id"]
         
-        # Create session
-        session_token = user_data["session_token"]
+        # Create session only if it doesn't exist (idempotent)
         expires_at = datetime.now(timezone.utc) + timedelta(days=7)
         
-        await self.db.user_sessions.insert_one({
-            "user_id": user_data["id"],
-            "session_token": session_token,
-            "expires_at": expires_at,
-            "created_at": datetime.now(timezone.utc)
-        })
+        # Use update_one with upsert to prevent duplicate sessions
+        await self.db.user_sessions.update_one(
+            {"session_token": session_token},
+            {
+                "$setOnInsert": {
+                    "user_id": user_data["id"],
+                    "session_token": session_token,
+                    "expires_at": expires_at,
+                    "created_at": datetime.now(timezone.utc)
+                }
+            },
+            upsert=True
+        )
         
         # Set httpOnly cookie
         response.set_cookie(

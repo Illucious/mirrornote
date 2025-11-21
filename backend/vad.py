@@ -49,7 +49,7 @@ def segment_speech(audio: np.ndarray, sr: int, frame_duration_ms: int = 30) -> L
         # Detect speech
         try:
             is_speech = vad.is_speech(frame_bytes, sr)
-        except:
+        except Exception:
             is_speech = False
         
         # Calculate time
