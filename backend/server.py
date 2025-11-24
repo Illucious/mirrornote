@@ -38,10 +38,9 @@ openai_audio_client = OpenAI(
     api_key=os.environ['OPENAI_API_KEY']
 )
 
-# For GPT-4 (text analysis) - use Emergent LLM via Kindo.ai
+# For GPT-4 (text analysis) - use direct OpenAI API
 openai_text_client = OpenAI(
-    api_key=os.environ['OPENAI_API_KEY'],
-    base_url="https://llm.kindo.ai/v1"
+    api_key=os.environ['OPENAI_API_KEY']
 )
 
 # Initialize services
@@ -257,7 +256,7 @@ async def analyze_voice(request_data: VoiceAnalysisRequest, request: Request):
             
             try:
                 gpt_response = openai_text_client.chat.completions.create(
-                    model="gpt-4",
+                    model="gpt-4-turbo",
                     messages=[
                         {"role": "system", "content": prompt_builder.SYSTEM_PROMPT},
                         {"role": "user", "content": gpt_prompt}
@@ -469,7 +468,7 @@ Format your response as JSON with these exact keys:
     
     try:
         response = openai_text_client.chat.completions.create(
-            model="gpt-4",
+            model="gpt-4-turbo",
             messages=[
                 {"role": "system", "content": "You are an expert voice and communication coach."},
                 {"role": "user", "content": prompt}
@@ -566,7 +565,7 @@ Format as JSON array with this structure:
     
     try:
         response = openai_text_client.chat.completions.create(
-            model="gpt-4",
+            model="gpt-4-turbo",
             messages=[
                 {"role": "system", "content": "You are an expert communication coach."},
                 {"role": "user", "content": prompt}

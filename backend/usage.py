@@ -13,7 +13,7 @@ class UsageService:
         self.db = db
         self.plans = {
             "free": {
-                "max_assessments": 5,
+                "max_assessments": 500,
                 "is_monthly": False  # Total limit, not monthly
             },
             "standard": {
