@@ -1,11 +1,11 @@
 import { useState, useEffect, useCallback } from 'react';
-import { 
-  View, 
-  Text, 
-  StyleSheet, 
-  SafeAreaView, 
-  FlatList, 
-  TouchableOpacity, 
+import {
+  View,
+  Text,
+  StyleSheet,
+  SafeAreaView,
+  FlatList,
+  TouchableOpacity,
   ActivityIndicator,
   RefreshControl
 } from 'react-native';
@@ -14,22 +14,9 @@ import { Ionicons } from '@expo/vector-icons';
 import axios from 'axios';
 import { COLORS, SPACING, FONT_SIZES, BORDER_RADIUS } from '../constants/theme';
 import { useAuth } from '../context/AuthContext';
+import { BACKEND_URL } from '../utils/config';
 
-const BACKEND_URL = process.env.EXPO_PUBLIC_BACKEND_URL;
-
-interface Assessment {
-  assessment_id: string;
-  created_at: string;
-  analysis: {
-    insights?: {
-      overall_score: number;
-      voice_personality: string;
-    };
-    // Legacy fallback
-    overall_score?: number;
-    archetype?: string;
-  };
-}
+import { Assessment } from '../types';
 
 export default function HistoryScreen() {
   const router = useRouter();
@@ -37,18 +24,29 @@ export default function HistoryScreen() {
   const [assessments, setAssessments] = useState<Assessment[]>([]);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
+  const [error, setError] = useState<string | null>(null);
 
   const fetchAssessments = async () => {
     try {
+      setError(null);
       const response = await axios.get(`${BACKEND_URL}/api/assessments`);
       const assessments = response.data.assessments || response.data || [];
       // Sort by date descending (newest first)
-      const sorted = Array.isArray(assessments) ? assessments.sort((a: Assessment, b: Assessment) => 
-        new Date(b.created_at).getTime() - new Date(a.created_at).getTime()
-      ) : [];
+      const sorted = Array.isArray(assessments) ? assessments.sort((a: Assessment, b: Assessment) => {
+        const dateA = a.created_at ? new Date(a.created_at).getTime() : 0;
+        const dateB = b.created_at ? new Date(b.created_at).getTime() : 0;
+        return dateB - dateA;
+      }) : [];
       setAssessments(sorted);
-    } catch (error) {
-      console.error('Error fetching assessments:', error);
+    } catch (err: any) {
+      console.error('Error fetching assessments:', err);
+      if (err.response?.status === 401) {
+        setError('Please log in to view your history');
+      } else if (err.response?.status === 429) {
+        setError('Too many requests. Please wait and try again.');
+      } else {
+        setError('Unable to load history. Pull down to retry.');
+      }
     } finally {
       setLoading(false);
       setRefreshing(false);
@@ -66,7 +64,8 @@ export default function HistoryScreen() {
     fetchAssessments();
   }, []);
 
-  const formatDate = (dateString: string) => {
+  const formatDate = (dateString?: string) => {
+    if (!dateString) return 'Unknown Date';
     const date = new Date(dateString);
     return date.toLocaleDateString('en-US', {
       month: 'short',
@@ -86,7 +85,7 @@ export default function HistoryScreen() {
     const archetype = item.analysis?.insights?.voice_personality || item.analysis?.archetype || 'Assessment';
 
     return (
-      <TouchableOpacity 
+      <TouchableOpacity
         style={styles.card}
         onPress={() => router.push({
           pathname: '/results',
@@ -104,7 +103,7 @@ export default function HistoryScreen() {
             </Text>
           </View>
         </View>
-        
+
         <View style={styles.cardFooter}>
           <Text style={styles.viewDetails}>View Analysis</Text>
           <Ionicons name="chevron-forward" size={16} color={COLORS.primary} />
@@ -129,6 +128,13 @@ export default function HistoryScreen() {
         <Text style={styles.title}>Assessment History</Text>
       </View>
 
+      {error && (
+        <View style={styles.errorBanner}>
+          <Ionicons name="alert-circle" size={20} color={COLORS.error} />
+          <Text style={styles.errorText}>{error}</Text>
+        </View>
+      )}
+
       {assessments.length > 0 ? (
         <FlatList
           data={assessments}
@@ -146,7 +152,7 @@ export default function HistoryScreen() {
           <Text style={styles.emptySubtext}>
             Start your first assessment to see your history here
           </Text>
-          <TouchableOpacity 
+          <TouchableOpacity
             style={styles.startButton}
             onPress={() => router.push('/recording')}
           >
@@ -260,5 +266,22 @@ const styles = StyleSheet.create({
     color: COLORS.textWhite,
     fontSize: FONT_SIZES.md,
     fontWeight: 'bold',
+  },
+  errorBanner: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: '#FEF2F2',
+    marginHorizontal: SPACING.lg,
+    marginBottom: SPACING.md,
+    padding: SPACING.md,
+    borderRadius: BORDER_RADIUS.md,
+    gap: SPACING.sm,
+    borderWidth: 1,
+    borderColor: COLORS.error + '30',
+  },
+  errorText: {
+    flex: 1,
+    fontSize: FONT_SIZES.sm,
+    color: COLORS.error,
   },
 });

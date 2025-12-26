@@ -3,8 +3,8 @@ import axios from 'axios';
 import * as Linking from 'expo-linking';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { Alert } from 'react-native';
+import { BACKEND_URL } from '../utils/config';
 
-const BACKEND_URL = process.env.EXPO_PUBLIC_BACKEND_URL;
 const AUTH_URL = 'https://auth.emergentagent.com';
 const SESSION_TOKEN_KEY = '@session_token';
 

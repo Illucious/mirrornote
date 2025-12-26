@@ -13,8 +13,7 @@ import axios from 'axios';
 import * as FileSystem from 'expo-file-system/legacy';
 import { useAuth } from './context/AuthContext';
 import { COLORS, SPACING, FONT_SIZES, BORDER_RADIUS } from './constants/theme';
-
-const BACKEND_URL = process.env.EXPO_PUBLIC_BACKEND_URL;
+import { BACKEND_URL } from './utils/config';
 
 export default function ProcessingScreen() {
   const { user } = useAuth();
@@ -22,7 +21,6 @@ export default function ProcessingScreen() {
   const params = useLocalSearchParams();
   const [stage, setStage] = useState('uploading');
   const [progress, setProgress] = useState(0);
-  const [assessmentId, setAssessmentId] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
@@ -55,15 +53,21 @@ export default function ProcessingScreen() {
       setStage('transcribing');
       setProgress(50);
 
+      // Verify user is authenticated before making API call
+      if (!user?.id) {
+        setError('You must be logged in to analyze your voice. Please log in and try again.');
+        return;
+      }
+
       // Send to backend (token is automatically added by axios interceptor)
       const response = await axios.post(`${BACKEND_URL}/api/analyze-voice`, {
         audio_base64: audioBase64,
-        user_id: user?.id || 'demo_user',
+        user_id: user.id,
         recording_mode: mode,
         recording_time: recordingTime,
       });
 
-      setAssessmentId(response.data.assessment_id);
+      const assessmentId = response.data.assessment_id;
 
       // Stage 3: Analyze
       setStage('analyzing');
@@ -85,7 +89,7 @@ export default function ProcessingScreen() {
       });
     } catch (err: any) {
       console.error('Processing error:', err);
-      
+
       // Handle authentication errors specifically
       if (err.response?.status === 401) {
         setError('You are not authenticated. Please log in and try again.');

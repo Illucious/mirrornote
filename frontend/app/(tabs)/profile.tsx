@@ -40,7 +40,10 @@ export default function ProfileScreen() {
         </View>
 
         <View style={styles.menuContainer}>
-          <TouchableOpacity style={styles.menuItem}>
+          <TouchableOpacity
+            style={styles.menuItem}
+            onPress={() => Alert.alert('Help & Support', 'Contact support@mirrornote.com for assistance.')}
+          >
             <View style={styles.menuItemLeft}>
               <Ionicons name="help-circle-outline" size={24} color={COLORS.textLight} />
               <Text style={styles.menuItemText}>Help & Support</Text>
@@ -48,7 +51,10 @@ export default function ProfileScreen() {
             <Ionicons name="chevron-forward" size={20} color={COLORS.textLight} />
           </TouchableOpacity>
 
-          <TouchableOpacity style={styles.menuItem}>
+          <TouchableOpacity
+            style={styles.menuItem}
+            onPress={() => Alert.alert('Terms & Privacy', 'Privacy Policy and Terms of Service coming soon.')}
+          >
             <View style={styles.menuItemLeft}>
               <Ionicons name="document-text-outline" size={24} color={COLORS.textLight} />
               <Text style={styles.menuItemText}>Terms & Privacy</Text>

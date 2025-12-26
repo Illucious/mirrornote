@@ -13,13 +13,13 @@ import { Ionicons } from '@expo/vector-icons';
 import axios from 'axios';
 import { useAuth } from '../context/AuthContext';
 import { COLORS, SPACING, FONT_SIZES, BORDER_RADIUS } from '../constants/theme';
-
-const BACKEND_URL = process.env.EXPO_PUBLIC_BACKEND_URL;
+import { BACKEND_URL } from '../utils/config';
 
 export default function DashboardScreen() {
   const { user } = useAuth();
   const router = useRouter();
   const [refreshing, setRefreshing] = useState(false);
+  const [error, setError] = useState<string | null>(null);
   const [stats, setStats] = useState({
     totalAssessments: 0,
     avgScore: 0,
@@ -28,6 +28,7 @@ export default function DashboardScreen() {
 
   const fetchStats = async () => {
     try {
+      setError(null);
       const response = await axios.get(`${BACKEND_URL}/api/assessments`);
       const assessments = response.data.assessments || [];
 
@@ -53,8 +54,16 @@ export default function DashboardScreen() {
           bestScore: 0,
         });
       }
-    } catch (error) {
-      console.error('Error fetching stats:', error);
+    } catch (err: any) {
+      console.error('Error fetching stats:', err);
+      // Show user-friendly error message
+      if (err.response?.status === 401) {
+        setError('Please log in to view your stats');
+      } else if (err.response?.status === 429) {
+        setError('Too many requests. Please wait and try again.');
+      } else {
+        setError('Unable to load stats. Pull down to retry.');
+      }
     } finally {
       setRefreshing(false);
     }
@@ -103,6 +112,14 @@ export default function DashboardScreen() {
             <Ionicons name="arrow-forward" size={24} color={COLORS.primary} />
           </View>
         </TouchableOpacity>
+
+        {/* Error Banner */}
+        {error && (
+          <View style={styles.errorBanner}>
+            <Ionicons name="alert-circle" size={20} color={COLORS.error} />
+            <Text style={styles.errorText}>{error}</Text>
+          </View>
+        )}
 
         {/* Stats Cards */}
         <View style={styles.statsContainer}>
@@ -297,5 +314,22 @@ const styles = StyleSheet.create({
   featureDescription: {
     fontSize: FONT_SIZES.sm,
     color: COLORS.textLight,
+  },
+  errorBanner: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: '#FEF2F2',
+    marginHorizontal: SPACING.lg,
+    marginTop: SPACING.md,
+    padding: SPACING.md,
+    borderRadius: BORDER_RADIUS.md,
+    gap: SPACING.sm,
+    borderWidth: 1,
+    borderColor: COLORS.error + '30',
+  },
+  errorText: {
+    flex: 1,
+    fontSize: FONT_SIZES.sm,
+    color: COLORS.error,
   },
 });

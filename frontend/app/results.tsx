@@ -15,55 +15,9 @@ import axios from 'axios';
 import { BarChart } from 'react-native-gifted-charts';
 import { useAuth } from './context/AuthContext';
 import { COLORS, SPACING, FONT_SIZES, BORDER_RADIUS } from './constants/theme';
+import { BACKEND_URL } from './utils/config';
 
-const BACKEND_URL = process.env.EXPO_PUBLIC_BACKEND_URL;
-
-interface Assessment {
-  assessment_id: string;
-  transcription: string;
-  analysis: {
-    // New personalized insights structure
-    insights?: {
-      voice_personality: string;
-      headline: string;
-      key_insights: string[];
-      what_went_well: string[];
-      growth_opportunities: string[];
-      tone_description: string;
-      overall_score: number;
-      clarity_score: number;
-      confidence_score: number;
-      personalized_tips?: string[];
-    };
-    metrics?: {
-      speaking_pace: number;
-      word_count: number;
-      pause_effectiveness: number;
-      vocal_variety: string;
-      energy_level: string;
-      clarity_rating: string;
-    };
-    // Legacy fields for backward compatibility
-    archetype?: string;
-    overall_score?: number;
-    clarity_score?: number;
-    confidence_score?: number;
-    tone?: string;
-    strengths?: string[];
-    improvements?: string[];
-    pitch_avg?: number;
-    pitch_range?: string;
-    speaking_pace?: number;
-    filler_words?: { [key: string]: number };
-    filler_count?: number;
-    word_count?: number;
-  };
-  training_questions?: Array<{
-    question: string;
-    answer: string;
-    is_free: boolean;
-  }>;
-}
+import { Assessment } from './types';
 
 export default function ResultsScreen() {
   const { user } = useAuth();
@@ -125,17 +79,18 @@ export default function ResultsScreen() {
   // All questions are now free
   const questions = training_questions || [];
 
-  // Extract values with fallbacks for backward compatibility
-  const overallScore = analysis?.insights?.overall_score || analysis?.overall_score || 75;
-  const archetype = analysis?.insights?.voice_personality || analysis?.archetype || 'Emerging Communicator';
-  const tone = analysis?.insights?.tone_description || analysis?.tone || 'Balanced';
-  const clarityScore = analysis?.insights?.clarity_score || analysis?.clarity_score || 75;
-  const confidenceScore = analysis?.insights?.confidence_score || analysis?.confidence_score || 70;
-  const speakingPace = analysis?.metrics?.speaking_pace || analysis?.speaking_pace || 0;
-  const pitchAvg = analysis?.pitch_avg || 0;
-  const pitchRange = analysis?.pitch_range || 'Medium';
+  // Extract values - show N/A or hide section if data is missing
+  // This prevents showing fake data when API fails or data is incomplete
+  const overallScore = analysis?.insights?.overall_score ?? analysis?.overall_score ?? null;
+  const archetype = analysis?.insights?.voice_personality || analysis?.archetype || null;
+  const tone = analysis?.insights?.tone_description || analysis?.tone || null;
+  const clarityScore = analysis?.insights?.clarity_score ?? analysis?.clarity_score ?? null;
+  const confidenceScore = analysis?.insights?.confidence_score ?? analysis?.confidence_score ?? null;
+  const speakingPace = analysis?.metrics?.speaking_pace ?? analysis?.speaking_pace ?? null;
+  const pitchAvg = analysis?.pitch_avg ?? null;
+  const pitchRange = analysis?.pitch_range || null;
   const fillerWords = analysis?.filler_words || {};
-  const fillerCount = analysis?.filler_count || 0;
+  const fillerCount = analysis?.filler_count ?? 0;
   const strengths = analysis?.insights?.what_went_well || analysis?.strengths || [];
   const improvements = analysis?.insights?.growth_opportunities || analysis?.improvements || [];
 
@@ -153,13 +108,13 @@ export default function ResultsScreen() {
         {/* Overall Score */}
         <View style={styles.scoreCard}>
           <View style={styles.scoreCircle}>
-            <Text style={styles.scoreValue}>{overallScore}</Text>
+            <Text style={styles.scoreValue}>{overallScore ?? 'N/A'}</Text>
             <Text style={styles.scoreLabel}>Overall Score</Text>
           </View>
           <View style={styles.archetypeContainer}>
             <Text style={styles.archetypeLabel}>Your Voice Archetype</Text>
-            <Text style={styles.archetypeValue}>{archetype}</Text>
-            <Text style={styles.toneText}>Tone: {tone}</Text>
+            <Text style={styles.archetypeValue}>{archetype ?? 'Analyzing...'}</Text>
+            {tone && <Text style={styles.toneText}>Tone: {tone}</Text>}
           </View>
         </View>
 
@@ -169,38 +124,40 @@ export default function ResultsScreen() {
           <View style={styles.metricsGrid}>
             <View style={styles.metricCard}>
               <Ionicons name="volume-high" size={24} color={COLORS.primary} />
-              <Text style={styles.metricValue}>{clarityScore}</Text>
+              <Text style={styles.metricValue}>{clarityScore ?? 'N/A'}</Text>
               <Text style={styles.metricLabel}>Clarity</Text>
             </View>
             <View style={styles.metricCard}>
               <Ionicons name="trophy" size={24} color={COLORS.primary} />
-              <Text style={styles.metricValue}>{confidenceScore}</Text>
+              <Text style={styles.metricValue}>{confidenceScore ?? 'N/A'}</Text>
               <Text style={styles.metricLabel}>Confidence</Text>
             </View>
             <View style={styles.metricCard}>
               <Ionicons name="speedometer" size={24} color={COLORS.primary} />
-              <Text style={styles.metricValue}>{speakingPace}</Text>
+              <Text style={styles.metricValue}>{speakingPace ?? 'N/A'}</Text>
               <Text style={styles.metricLabel}>WPM</Text>
             </View>
           </View>
         </View>
 
-        {/* Pitch Analysis */}
-        <View style={styles.section}>
-          <Text style={styles.sectionTitle}>Pitch Analysis</Text>
-          <View style={styles.card}>
-            <View style={styles.pitchInfo}>
-              <View style={styles.pitchItem}>
-                <Text style={styles.pitchLabel}>Average</Text>
-                <Text style={styles.pitchValue}>{pitchAvg} Hz</Text>
-              </View>
-              <View style={styles.pitchItem}>
-                <Text style={styles.pitchLabel}>Range</Text>
-                <Text style={styles.pitchValue}>{pitchRange}</Text>
+        {/* Pitch Analysis - only show if we have data */}
+        {(pitchAvg !== null || pitchRange !== null) && (
+          <View style={styles.section}>
+            <Text style={styles.sectionTitle}>Pitch Analysis</Text>
+            <View style={styles.card}>
+              <View style={styles.pitchInfo}>
+                <View style={styles.pitchItem}>
+                  <Text style={styles.pitchLabel}>Average</Text>
+                  <Text style={styles.pitchValue}>{pitchAvg !== null ? `${pitchAvg} Hz` : 'N/A'}</Text>
+                </View>
+                <View style={styles.pitchItem}>
+                  <Text style={styles.pitchLabel}>Range</Text>
+                  <Text style={styles.pitchValue}>{pitchRange ?? 'N/A'}</Text>
+                </View>
               </View>
             </View>
           </View>
-        </View>
+        )}
 
         {/* Filler Words */}
         {fillerCount > 0 && (

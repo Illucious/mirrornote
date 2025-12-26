@@ -17,11 +17,10 @@ import axios from 'axios';
 import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
 import { COLORS, SPACING, FONT_SIZES, BORDER_RADIUS } from './constants/theme';
 import { useAuth } from './context/AuthContext';
+import { BACKEND_URL } from './utils/config';
 
 const { width } = Dimensions.get('window');
 const MAX_RECORDING_DURATION = 120000; // 2 minutes in milliseconds
-
-const BACKEND_URL = process.env.EXPO_PUBLIC_BACKEND_URL;
 
 // Sample texts for guided mode (fallback)
 const SAMPLE_TEXTS = [
@@ -57,6 +56,7 @@ export default function RecordingScreen() {
   const [recordingTime, setRecordingTime] = useState(0);
   const [audioUri, setAudioUri] = useState<string | null>(null);
   const [permissionGranted, setPermissionGranted] = useState(false);
+  const [meteringLevels, setMeteringLevels] = useState<number[]>(new Array(20).fill(10)); // Default low level
   const timerRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
   useEffect(() => {
@@ -75,7 +75,7 @@ export default function RecordingScreen() {
       if (status !== 'granted') {
         Alert.alert('Permission Required', 'Microphone permission is required to record audio.');
       }
-      
+
       await Audio.setAudioModeAsync({
         allowsRecordingIOS: true,
         playsInSilentModeIOS: true,
@@ -93,30 +93,60 @@ export default function RecordingScreen() {
     }
 
     try {
-      const { recording: newRecording } = await Audio.Recording.createAsync(
-        Audio.RecordingOptionsPresets.HIGH_QUALITY
-      );
-      
+      const { recording: newRecording } = await Audio.Recording.createAsync({
+        ...Audio.RecordingOptionsPresets.HIGH_QUALITY,
+        android: {
+          ...Audio.RecordingOptionsPresets.HIGH_QUALITY.android,
+          // @ts-ignore
+          meteringEnabled: true,
+        },
+        ios: {
+          ...Audio.RecordingOptionsPresets.HIGH_QUALITY.ios,
+          // @ts-ignore
+          meteringEnabled: true,
+        },
+      });
+
+      // Set up metering for waveform
+      newRecording.setOnRecordingStatusUpdate((status) => {
+        if (status.isRecording && status.metering !== undefined) {
+          const db = status.metering;
+          // Normalize -60dB to 0dB range to 0-100 scale
+          const minDb = -60;
+          const maxDb = 0;
+          let level = (Math.max(minDb, Math.min(maxDb, db)) - minDb) / (maxDb - minDb) * 100;
+
+          // Ensure minimum visibility
+          level = Math.max(level, 5);
+
+          setMeteringLevels(prev => [...prev.slice(1), level]);
+        }
+      });
+
+      // Update metering 10 times per second
+      await newRecording.setProgressUpdateInterval(100);
+
       setRecording(newRecording);
       setIsRecording(true);
       setRecordingTime(0);
-      
+
       // Start timer
       timerRef.current = setInterval(() => {
-        setRecordingTime((prev) => {
-          const newTime = prev + 1;
-          // Auto-stop at 2 minutes
-          if (newTime >= 120) {
-            stopRecording();
-          }
-          return newTime;
-        });
+        setRecordingTime((prev) => prev + 1);
       }, 1000);
     } catch (error) {
       console.error('Failed to start recording', error);
       Alert.alert('Error', 'Failed to start recording. Please try again.');
     }
   };
+
+  // Auto-stop recording when time limit reached
+  useEffect(() => {
+    if (recordingTime >= 120 && isRecording) {
+      stopRecording();
+    }
+  }, [recordingTime, isRecording]);
+
 
   const stopRecording = async () => {
     if (!recording) return;
@@ -125,7 +155,7 @@ export default function RecordingScreen() {
       if (timerRef.current) {
         clearInterval(timerRef.current);
       }
-      
+
       setIsRecording(false);
       await recording.stopAndUnloadAsync();
       const uri = recording.getURI();
@@ -234,7 +264,7 @@ export default function RecordingScreen() {
           <Text style={styles.headerTitle}>Choose Recording Mode</Text>
         </View>
 
-        <ScrollView 
+        <ScrollView
           contentContainerStyle={[
             styles.modeSelection,
             { paddingBottom: insets.bottom + SPACING.lg }
@@ -292,7 +322,7 @@ export default function RecordingScreen() {
         </Text>
       </View>
 
-      <ScrollView 
+      <ScrollView
         contentContainerStyle={[
           styles.recordingContent,
           { paddingBottom: insets.bottom + SPACING.lg }
@@ -306,7 +336,7 @@ export default function RecordingScreen() {
             <ScrollView style={styles.textScrollView}>
               <Text style={styles.textContent}>{selectedText.content}</Text>
             </ScrollView>
-            <TouchableOpacity 
+            <TouchableOpacity
               style={styles.changeTextButton}
               onPress={fetchNewText}
               disabled={loadingNewText}
@@ -344,14 +374,15 @@ export default function RecordingScreen() {
           <View style={styles.waveformContainer}>
             {isRecording ? (
               <View style={styles.waveformActive}>
-                {[...Array(20)].map((_, i) => (
+                {meteringLevels.map((level, i) => (
                   <View
                     key={i}
                     style={[
                       styles.waveBar,
                       {
-                        height: Math.random() * 60 + 20,
+                        height: Math.max(5, level), // Ensure minimum height
                         backgroundColor: COLORS.primary,
+                        opacity: 0.5 + (level / 200), // Dynamic opacity
                       },
                     ]}
                   />
@@ -370,8 +401,8 @@ export default function RecordingScreen() {
             {isRecording
               ? 'Recording...'
               : audioUri
-              ? 'Recording Complete'
-              : 'Tap to start recording'}
+                ? 'Recording Complete'
+                : 'Tap to start recording'}
           </Text>
         </View>
 
