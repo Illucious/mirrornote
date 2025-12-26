@@ -39,8 +39,8 @@ def extract_prosody(audio: np.ndarray, sr: int) -> Dict:
         # Extract F0 using PYIN
         f0, voiced_flag, voiced_probs = librosa.pyin(
             audio,
-            fmin=librosa.note_to_hz('C2'),  # ~65 Hz
-            fmax=librosa.note_to_hz('C7'),  # ~2093 Hz
+            fmin=50,  # Lower to 50Hz to catch deep voices/fry
+            fmax=3000,  # Increase to 3000Hz covers higher range
             sr=sr
         )
         
