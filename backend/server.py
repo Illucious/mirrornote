@@ -448,8 +448,8 @@ async def analyze_voice(request: Request, request_data: VoiceAnalysisRequest):
                 "clarity_score": gpt_insights.get("clarity_score", 75),
                 "confidence_score": gpt_insights.get("confidence_score", 70),
                 "tone": gpt_insights.get("tone_description", rule_based_insights["tone_description"]),
-                "strengths": gpt_insights.get("strengths", rule_based_insights["what_went_well"]),
-                "improvements": gpt_insights.get("improvements", rule_based_insights["growth_opportunities"]),
+                # Removed: "strengths" and "improvements" - duplicates of insights.what_went_well and insights.growth_opportunities
+                # Frontend already uses insights.what_went_well and insights.growth_opportunities as primary source
                 "speaking_pace": speaking_pace,
                 "filler_words": filler_words,
                 "filler_count": sum(filler_words.values()),
@@ -650,12 +650,16 @@ def generate_training_questions(analysis: Dict[str, Any], transcription: str) ->
     """
     Generate personalized training questions using GPT-4
     """
+    # Get strengths and improvements from the correct location
+    strengths = analysis.get('insights', {}).get('what_went_well', [])
+    improvements = analysis.get('insights', {}).get('growth_opportunities', [])
+    
     prompt = f"""Based on this voice analysis, generate 10 training questions to help improve communication skills:
 
 Analysis:
 - Archetype: {analysis.get('archetype')}
-- Strengths: {', '.join(analysis.get('strengths', []))}
-- Areas for improvement: {', '.join(analysis.get('improvements', []))}
+- Strengths: {', '.join(strengths)}
+- Areas for improvement: {', '.join(improvements)}
 - Filler words: {analysis.get('filler_count', 0)}
 - Speaking pace: {analysis.get('speaking_pace', 0)} WPM
 
