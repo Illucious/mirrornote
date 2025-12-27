@@ -1,6 +1,7 @@
 from fastapi import FastAPI, APIRouter, File, UploadFile, Form, HTTPException, Request, Response
 from dotenv import load_dotenv
 from starlette.middleware.cors import CORSMiddleware
+import uvicorn
 from motor.motor_asyncio import AsyncIOMotorClient
 import os
 import tempfile
@@ -263,13 +264,20 @@ async def analyze_voice(request: Request, request_data: VoiceAnalysisRequest):
     """
     Analyzes voice recording using OpenAI Whisper and GPT-4
     """
+    logger.info("========== ANALYZE-VOICE ENDPOINT CALLED ==========")
+    logger.info(f"Recording mode: {request_data.recording_mode}, Recording time: {request_data.recording_time}")
+    logger.info(f"Audio base64 length: {len(request_data.audio_base64)} characters")
+    
     try:
         # Get authenticated user (required for usage tracking)
+        logger.info("Attempting to get authenticated user...")
         user = await auth_service.get_current_user(request)
         user_id = user["id"]
+        logger.info(f"Authenticated user: {user_id}")
         
         # Create assessment record
         assessment_id = str(uuid.uuid4())
+        logger.info(f"Created assessment_id: {assessment_id}")
         
         # Save initial assessment to database
         assessment = {
@@ -282,43 +290,61 @@ async def analyze_voice(request: Request, request_data: VoiceAnalysisRequest):
             "created_at": datetime.utcnow()
         }
         
+        logger.info("Inserting initial assessment into database...")
         await db.assessments.insert_one(assessment)
+        logger.info("Initial assessment saved to database")
         
         # Process audio
         try:
             # ===== ACOUSTIC ANALYSIS PIPELINE =====
             # 1. Load audio from base64
+            logger.info("Step 1: Loading audio from base64...")
             audio, sr = audio_utils.load_audio_from_base64(request_data.audio_base64, target_sr=16000)
             duration = audio_utils.get_audio_duration(audio, sr)
+            logger.info(f"Audio loaded: duration={duration:.2f}s, sample_rate={sr}")
             
             # 2. Voice Activity Detection and timing analysis
+            logger.info("Step 2: Running Voice Activity Detection...")
             segments = vad.segment_speech(audio, sr)
+            logger.info(f"VAD found {len(segments)} speech segments")
             timing_metrics = vad.compute_timing_metrics(segments, duration)
+            logger.info(f"Timing metrics computed: {timing_metrics}")
             
             # 3. Extract all acoustic features
+            logger.info("Step 3: Extracting acoustic features...")
             acoustic_features = feature_extractor.extract_all_features(audio, sr, segments)
+            logger.info(f"Acoustic features extracted: prosody keys={list(acoustic_features.get('prosody', {}).keys())}")
             
             # 4. Transcription with Whisper
+            logger.info("Step 4: Transcribing audio with Whisper...")
             temp_wav_path = audio_utils.save_temp_wav(audio, sr)
+            logger.info(f"Temp WAV saved to: {temp_wav_path}")
             try:
                 with open(temp_wav_path, "rb") as audio_file:
+                    logger.info("Calling OpenAI Whisper API...")
                     transcription_response = openai_audio_client.audio.transcriptions.create(
                         model="whisper-1",
                         file=audio_file,
                         response_format="text"
                     )
                     transcription = transcription_response if isinstance(transcription_response, str) else transcription_response.text
+                    logger.info(f"Transcription received: {len(transcription)} characters")
+                    logger.info(f"Transcription preview: {transcription[:200]}..." if len(transcription) > 200 else f"Transcription: {transcription}")
             finally:
                 # Clean up temp file
                 if os.path.exists(temp_wav_path):
                     os.remove(temp_wav_path)
+                    logger.info("Temp WAV file cleaned up")
             
             # 5. Detect filler words
+            logger.info("Step 5: Detecting filler words...")
             filler_words = detect_filler_words(transcription)
             word_count = len(transcription.split())
             speaking_pace = int((word_count / duration) * 60) if duration > 0 else 0
+            logger.info(f"Filler words: {filler_words}, Word count: {word_count}, Speaking pace: {speaking_pace} WPM")
             
             # 6. Build comprehensive metrics
+            logger.info("Step 6: Building comprehensive metrics...")
             all_metrics = {
                 "transcription": transcription,
                 "duration": duration,
@@ -333,15 +359,20 @@ async def analyze_voice(request: Request, request_data: VoiceAnalysisRequest):
             }
             
             # 7. Generate rule-based personalized insights
+            logger.info("Step 7: Generating rule-based insights...")
             rule_based_insights = insights_generator.generate_personalized_summary(all_metrics)
+            logger.info(f"Rule-based insights generated: voice_personality={rule_based_insights.get('voice_personality')}")
             
             # 8. Enhanced GPT analysis with acoustic context
+            logger.info("Step 8: Building GPT analysis prompt...")
             gpt_prompt = prompt_builder.build_gpt_analysis_prompt(
                 transcription=transcription,
                 acoustic_metrics=all_metrics,
                 duration=duration
             )
+            logger.info(f"GPT prompt built: {len(gpt_prompt)} characters")
             
+            logger.info("Step 9: Calling GPT-4 for analysis...")
             try:
                 gpt_response = openai_text_client.chat.completions.create(
                     model="gpt-4-turbo",
@@ -352,7 +383,9 @@ async def analyze_voice(request: Request, request_data: VoiceAnalysisRequest):
                     response_format={"type": "json_object"},
                     timeout=60  # 60 second timeout for GPT
                 )
+                logger.info("GPT response received, parsing JSON...")
                 raw_gpt_response = json.loads(gpt_response.choices[0].message.content)
+                logger.info(f"GPT raw response keys: {list(raw_gpt_response.keys())}")
                 # Validate and normalize GPT response using Pydantic model
                 validated_response = GPTInsightsResponse(**raw_gpt_response)
                 gpt_insights = validated_response.dict()
@@ -365,6 +398,7 @@ async def analyze_voice(request: Request, request_data: VoiceAnalysisRequest):
                 gpt_insights = {}
             
             # 9. Merge insights: GPT + rule-based fallbacks
+            logger.info("Step 10: Merging GPT and rule-based insights...")
             analysis = {
                 # User-facing insights (personalized narrative)
                 "insights": {
@@ -419,10 +453,20 @@ async def analyze_voice(request: Request, request_data: VoiceAnalysisRequest):
                 "speaking_pace": speaking_pace,
                 "filler_words": filler_words,
                 "filler_count": sum(filler_words.values()),
-                "word_count": word_count
+                "word_count": word_count,
+                
+                # Pitch analysis fields for frontend
+                "pitch_avg": round(acoustic_features["prosody"].get("pitch_mean", 0)),
+                "pitch_range": _get_pitch_range_label(acoustic_features["prosody"].get("pitch_range_hz", 0))
             }
             
+            logger.info("Step 11: Analysis object built successfully")
+            logger.info(f"Analysis keys: {list(analysis.keys())}")
+            logger.info(f"Overall score: {analysis.get('overall_score')}, Clarity: {analysis.get('clarity_score')}, Confidence: {analysis.get('confidence_score')}")
+            logger.info(f"Pitch data: pitch_avg={analysis.get('pitch_avg')} Hz, pitch_range={analysis.get('pitch_range')}")
+            
             # Update assessment with results
+            logger.info("Step 12: Updating assessment in database...")
             await db.assessments.update_one(
                 {"assessment_id": assessment_id},
                 {"$set": {
@@ -432,20 +476,25 @@ async def analyze_voice(request: Request, request_data: VoiceAnalysisRequest):
                     "processed_at": datetime.utcnow()
                 }}
             )
+            logger.info("Assessment updated in database")
             
             # Generate training questions (with error handling - don't fail main request)
+            logger.info("Step 13: Generating training questions...")
             try:
                 training_questions = generate_training_questions(analysis, transcription)
+                logger.info(f"Generated {len(training_questions)} training questions")
                 await db.training_questions.insert_one({
                     "assessment_id": assessment_id,
                     "questions": training_questions,
                     "created_at": datetime.utcnow()
                 })
+                logger.info("Training questions saved to database")
             except Exception as tq_error:
                 logger.error(f"Failed to generate training questions: {tq_error}")
                 # Don't fail the main request - training questions are non-critical
             
             # Track usage for this analysis
+            logger.info("Step 14: Tracking usage...")
             try:
                 await usage_service.track_analysis(user_id)
                 logger.info(f"Usage tracked for user {user_id}")
@@ -453,6 +502,8 @@ async def analyze_voice(request: Request, request_data: VoiceAnalysisRequest):
                 logger.error(f"Failed to track usage: {usage_error}")
                 # Don't fail the request for usage tracking failures
             
+            logger.info("========== ANALYZE-VOICE COMPLETED SUCCESSFULLY ==========")
+            logger.info(f"Returning assessment_id: {assessment_id}")
             return VoiceAnalysisResponse(
                 assessment_id=assessment_id,
                 status="completed",
@@ -543,6 +594,23 @@ async def get_assessments(request: Request, limit: int = 10, skip: int = 0):
         "assessments": assessments,
         "total": await db.assessments.count_documents({"user_id": user["id"]})
     }
+
+def _get_pitch_range_label(pitch_range_hz: float) -> str:
+    """
+    Convert pitch range in Hz to a human-readable label.
+    
+    Args:
+        pitch_range_hz: Pitch range in Hz (p95 - p5)
+        
+    Returns:
+        Label: "Narrow", "Medium", or "Wide"
+    """
+    if pitch_range_hz < 30:
+        return "Narrow"
+    elif pitch_range_hz < 80:
+        return "Medium"
+    else:
+        return "Wide"
 
 def detect_filler_words(text: str) -> Dict[str, int]:
     """
@@ -684,3 +752,7 @@ async def global_exception_handler(request: Request, exc: Exception):
 @app.on_event("shutdown")
 async def shutdown_db_client():
     client.close()
+
+
+if __name__ == "__main__":
+    uvicorn.run(app, host="0.0.0.0", port=8080)
